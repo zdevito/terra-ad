@@ -57,20 +57,6 @@ local function newtype()
     return t
 end
 
-local function memoize(fn)
-    local nparams = debug.getninfo(fn,"u").nparams
-    local cache = {}
-    return function(...)
-        local tbl = cache
-        for i = 1,nparams-1 do
-            local p = select(i,...)
-            local e = tbl[p]
-            if not e then
-            end
-        end
-    end
-end
-
 -- operator (op) object represents all 
 -- operators applied in AD language
 -- can be defined as primitives or by composition of other operators
@@ -110,7 +96,6 @@ local function composeop(np, generator)
         
         --construct key for this op "opname,argid0,...argidn"
         local ident = tostring(n.value.prim) .. "," .. table.concat(args,",")
-        print(ident)
         if cache[ident] then return cache[ident] end
         stmts:insert { prim = n.value.prim, args = args } 
         cache[ident] = #stmts
@@ -230,8 +215,8 @@ function op:codegen()
     end
     
     local terra result([params]) stmts return r,dparams end
-    result:printpretty()
-    result:disas()
+    --result:printpretty()
+    --result:disas()
     return result
 end
 
@@ -267,8 +252,8 @@ stuff = ad.compoundop(function(a,b)
     return ad.exp(4*a) - -(ad.cos(3*b*b))
 end)
 
-stuff2 = ad.compoundop(function(a)
-    return 3*ad.exp(a)
+stuff2 = ad.compoundop(function(x,y)
+    return x*x + y*x + 4
 end)
 stuff:print()
 stuff2:print()
@@ -277,4 +262,4 @@ stuff2:print()
 local f = stuff2:codegen()
 --ad.cos:codegen()
 
-print(f(4))
+print(f(4,3))
