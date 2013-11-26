@@ -248,18 +248,4 @@ ad.sqrt = ad.primitiveopv(1,function(v,a) return `C.sqrt(a),`1.0/(2.0*v) end)
 ad.tan = ad.primitiveopv(1,function(v,a) return `C.tan(a),`1.0 + v*v end)
 ad.tanh = ad.primitiveop(function(a) return `C.tanh(a),quote var c = C.cosh(a) in 1.0/(c*c) end end)
 
-stuff = ad.compoundop(function(a,b)
-    return ad.exp(4*a) - -(ad.cos(3*b*b))
-end)
-
-stuff2 = ad.compoundop(function(x,y)
-    return x*x + y*x + 4
-end)
-stuff:print()
-stuff2:print()
-
---stuff:codegen()
-local f = stuff2:codegen()
---ad.cos:codegen()
-
-print(f(4,3))
+return ad
