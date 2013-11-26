@@ -158,7 +158,7 @@ m.addConstructors(LogisticRegressionModel)
 
 -- 'train.csv' from https://www.kaggle.com/c/digit-recognizer/data
 local datafile = "/Users/zdevito/Downloads/train.csv"
-local numDatapointsToUse = 3000
+local numDatapointsToUse = 6000
 
 -- MNIST data has 10 classes (digits 0-10) and images are 28x28
 local numClasses = 10
@@ -185,14 +185,14 @@ local terra doTraining()
 	C.printf("Max tape mem used: %u\n", ad.maxTapeMemUsed())
 end
 
-doTraining()
---[[terralib.saveobj("mnist_terra",
+--doTraining()
+terralib.saveobj("mnist_terra",
 {
 	main = terra()
 		ad.initGlobals()
 		doTraining()
 	end
-})]]
+})
 
 
 

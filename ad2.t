@@ -295,7 +295,10 @@ local MallocArray = macro(function(T,N)
     return `[&T](C.mallochigh(sizeof(T)*N))
 end)
 
+local maxmem = global(uint32,0)
+
 terra ad.initGlobals()
+    maxmem = 0
     derivs = MallocArray(double,MAX_SIZE)
     derivnparams = MallocArray(idxtype,MAX_SIZE)
     tapeidx = MallocArray(idxtype,MAX_SIZE)
@@ -369,8 +372,6 @@ function op:macro()
     end)
 end
 
-local maxmem = global(double,0.0)
-
 terra resetTape()
     var memallocated = (derivpos + tapepos) * 12
     if maxmem < memallocated then
@@ -401,8 +402,7 @@ terra Num:grad() : {}
             derivs[idx] = derivs[idx] + val*dydv
         end
     end
-    
-    
+    resetTape()
 end
 
 local Vector = terralib.require("vector")
