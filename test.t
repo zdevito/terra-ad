@@ -1,5 +1,5 @@
 
-local ad = terralib.require("ad")
+local ad = terralib.require("ad2")
 local cstdio = terralib.includec("stdio.h")
 local cmath = terralib.includec("math.h")
 local Vector = terralib.require("vector")

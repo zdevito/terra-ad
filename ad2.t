@@ -40,7 +40,16 @@ op
 ]]
 
 
-local C = terralib.includec("math.h")
+local C = terralib.includecstring [[
+    #include <math.h>
+    #include <stdlib.h>
+    #include <sys/mman.h>
+    
+    void * mallochigh(size_t len) {
+        void * addr = (void*)0x100000000ULL;
+        return mmap(addr,len,PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1,0);
+    }
+]]
 
 local function dsym() return symbol(double) end
 
@@ -219,6 +228,12 @@ function op:codegen()
     --result:disas()
     return result
 end
+function op:getimpl()
+    if not self.impl then
+        self.impl = self:codegen()
+    end
+    return self.impl
+end
 
 num.__add = ad.primitiveop(function(a,b) return `a + b, {`1.0, `1.0} end)
 num.__sub = ad.primitiveop(function(a,b) return `a - b, {`1.0, `-1.0} end)
@@ -228,7 +243,7 @@ local unm = ad.primitiveop(function(a) return `-a, `1.0 end)
 num.__unm = function(a) return unm(a) end
 
 ad.acos = ad.primitiveop(function(a) return `C.acos(a),`-1.0/C.sqrt(1.0 - a*a) end)
-ad.acosh = ad.primitiveop(function(a) return `C.cosh(a),`1.0/C.sqrt(a*a - 1.0) end)
+ad.acosh = ad.primitiveop(function(a) return `C.acosh(a),`1.0/C.sqrt(a*a - 1.0) end)
 ad.asin = ad.primitiveop(function(a) return `C.asin(a),`1.0/C.sqrt(1.0 - a*a) end)
 ad.asinh = ad.primitiveop(function(a) return `C.asinh(a),`1.0/C.sqrt(a*a + 1.0) end)
 ad.atan = ad.primitiveop(function(a) return `C.atan(a),`1.0/(a*a + 1.0) end)
@@ -247,5 +262,150 @@ ad.sinh = ad.primitiveop(function(a) return `C.sinh(a),`C.cosh(a) end)
 ad.sqrt = ad.primitiveopv(1,function(v,a) return `C.sqrt(a),`1.0/(2.0*v) end)
 ad.tan = ad.primitiveopv(1,function(v,a) return `C.tan(a),`1.0 + v*v end)
 ad.tanh = ad.primitiveop(function(a) return `C.tanh(a),quote var c = C.cosh(a) in 1.0/(c*c) end end)
+ad.fmin = ad.primitiveop(function(a,b) 
+    local less = `a < b
+    return `terralib.select(less,a,b),
+          {`terralib.select(less,1.0,0.0),
+           `terralib.select(less,0.0,1.0) }
+end)
+ad.fmax = ad.primitiveop(function(a,b) 
+    local less = `a < b
+    return `terralib.select(less,b,a),
+          {`terralib.select(less,0.0,1.0),
+           `terralib.select(less,1.0,0.0) }
+end)
+
+-- Tape Management -----------------------------------------------------------------------
+
+--store dy/dn for each ad.num type n 
+local derivs = global(&double)
+local derivnparams = global(&uint32)
+local tapeidx = global(&uint32)
+local tapeval = global(&double)
+local tapepos = global(uint32)
+local derivpos = global(uint32)
+local MAX_SIZE = 1024*1024*512 --four gigs of doubles
+
+local MallocArray = macro(function(T,N)
+    T = T:astype()
+    return `[&T](C.mallochigh(sizeof(T)*N))
+end)
+
+local terra initializeGlobals()
+    derivs = MallocArray(double,MAX_SIZE)
+    derivnparams = MallocArray(uint32,MAX_SIZE)
+    tapeidx = MallocArray(uint32,MAX_SIZE)
+    tapeval = MallocArray(double,MAX_SIZE)
+    tapepos,derivpos = 0,0
+end
+initializeGlobals()
+
+struct Num {
+    value : double;
+    idx : uint32; --index into derivs storing dy/dself
+}
+
+--returns idx of derivative, and idx in to tape to store the parameters
+local terra tapealloc(np : uint32)
+    var d,t = derivpos,tapepos
+    derivs[d] = 0.0
+    derivnparams[d] = np 
+    derivpos,tapepos = derivpos+1,tapepos + np
+    return d,t
+end
+
+terra createnum(v : double)
+    var d,t = tapealloc(0)
+    return Num { v, d }
+end
+
+Num.metamethods.__cast = function(from, to, exp)
+	if from == double and to == Num then
+		return `createnum(exp)
+	else
+		error(string.format("ad.t: Cannot cast '%s' to '%s'", tostring(from), tostring(to)))
+	end
+end
+
+function op:macro()
+    return macro(function(...)
+        local impl = self:getimpl()
+        local args = terralib.newlist {}
+        local argsym = terralib.newlist {}
+        for i = 1,self.nparams do
+            local a = select(i,...)
+            if a:gettype() == double then
+                --TODO: regenerate op with fewer arguments, do not promote 'a' into the tape
+                a = `ad.num(a)
+            end
+            args[i],argsym[i] = a, symbol(Num)
+        end
+        local function partialaddr(base,p)
+            local r = {}
+            for i = 1, self.nparams do
+                r[i] = `base[p + [i-1]]
+            end
+            assert(terralib.israwlist(r))
+            return r
+        end
+        local values = argsym:map(function(a) return `a.value end)
+        local idxs = argsym:map(function(a) return `a.idx end)
+        local r = quote
+            var [argsym] = [args]
+            var d,t = tapealloc(self.nparams)
+            var v : double
+            v,[partialaddr(tapeval,t)] = impl(values)
+            [partialaddr(tapeidx,t)] = idxs
+        in Num { v, d } end
+        --r:printpretty()
+        return r
+    end)
+end
+
+-- Compute the gradient dself/dv for other variables v
+terra Num:grad() : {}
+    derivs[self.idx] = 1.0
+    var t = tapepos
+    for i_ = derivpos, 0, -1 do
+        var i = i_ - 1 
+        var dydv = derivs[i]
+        var np = derivnparams[i]
+        for j = 0,np do
+            t = t - 1
+            var idx,val = tapeidx[t],tapeval[t]
+            derivs[idx] = derivs[idx] + val*dydv
+        end
+    end
+    derivpos,tapepos = 0,0
+end
+
+local Vector = terralib.require("vector")
+-- Compute the gradient of self w.r.t the given vector of
+-- variables and store the result in the given vector of doubles
+terra Num:grad(indeps: &Vector(Num), gradient: &Vector(double)) : {}
+	self:grad()
+	gradient:resize(indeps.size)
+	for i=0,indeps.size do
+		gradient:set(i, derivs[indeps:get(i).idx])
+	end
+end
+terra Num:val() return self.value end
+terra Num:adj() return derivs[self.idx] end
+
+local arith = { "__add", "__sub", "__mul", "__div" }
+for i,a in ipairs(arith) do
+    Num.metamethods[a] = num[a]:macro()
+end
+Num.metamethods.__unm = unm:macro()
+
+ad.math = {}
+
+ad.num = Num
+
+for k,v in pairs(ad) do
+    if op.isinstance(v) then
+        ad.math[k] = v:macro()
+    end
+end
 
 return ad
