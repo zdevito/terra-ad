@@ -123,6 +123,8 @@ terra LogisticRegressionModel:logprob(class: int, features: &Vector(double), par
 	return ad.math.log(ret)
 end
 
+LogisticRegressionModel.methods.logprob:disas()
+
 -- Gradient descent
 terra LogisticRegressionModel:train(data: &Vector(Datum), learnRate: double, iters: uint)
 	var params = [Vector(num)].stackAlloc(self.params.size, 0.0)
@@ -155,8 +157,8 @@ m.addConstructors(LogisticRegressionModel)
 -----------------------------------
 
 -- 'train.csv' from https://www.kaggle.com/c/digit-recognizer/data
-local datafile = "/Users/dritchie/Git/terra-ad/mnist/train.csv"
-local numDatapointsToUse = 6000
+local datafile = "/Users/zdevito/Downloads/train.csv"
+local numDatapointsToUse = 3000
 
 -- MNIST data has 10 classes (digits 0-10) and images are 28x28
 local numClasses = 10
@@ -164,7 +166,7 @@ local numFeatures = 28*28
 
 -- Uhhh...some arbitrary constants
 local learnRate = 0.00005
-local iters = 100
+local iters = 5
 
 local terra doTraining()
 	var data = loadData(datafile, numDatapointsToUse)
@@ -183,14 +185,14 @@ local terra doTraining()
 	C.printf("Max tape mem used: %u\n", ad.maxTapeMemUsed())
 end
 
---doTraining()
-terralib.saveobj("mnist_terra",
+doTraining()
+--[[terralib.saveobj("mnist_terra",
 {
 	main = terra()
 		ad.initGlobals()
 		doTraining()
 	end
-})
+})]]
 
 
 

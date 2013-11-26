@@ -44,6 +44,7 @@ local C = terralib.includecstring [[
     #include <math.h>
     #include <stdlib.h>
     #include <sys/mman.h>
+    #include <stdio.h>
     
     void * mallochigh(size_t len) {
         void * addr = (void*)0x100000000ULL;
@@ -235,6 +236,8 @@ function op:getimpl()
     return self.impl
 end
 
+-- Primitives ----------------------------------------------------------------------------
+
 num.__add = ad.primitiveop(function(a,b) return `a + b, {`1.0, `1.0} end)
 num.__sub = ad.primitiveop(function(a,b) return `a - b, {`1.0, `-1.0} end)
 num.__mul = ad.primitiveop(function(a,b) return `a * b, {`b, `a} end)
@@ -277,13 +280,14 @@ end)
 
 -- Tape Management -----------------------------------------------------------------------
 
---store dy/dn for each ad.num type n 
+--store dy/dn for each ad.num type n
+local idxtype = uint32
 local derivs = global(&double)
-local derivnparams = global(&uint32)
-local tapeidx = global(&uint32)
+local derivnparams = global(&idxtype)
+local tapeidx = global(&idxtype)
 local tapeval = global(&double)
-local tapepos = global(uint32)
-local derivpos = global(uint32)
+local tapepos = global(idxtype)
+local derivpos = global(idxtype)
 local MAX_SIZE = 1024*1024*512 --four gigs of doubles
 
 local MallocArray = macro(function(T,N)
@@ -291,18 +295,18 @@ local MallocArray = macro(function(T,N)
     return `[&T](C.mallochigh(sizeof(T)*N))
 end)
 
-local terra initializeGlobals()
+terra ad.initGlobals()
     derivs = MallocArray(double,MAX_SIZE)
-    derivnparams = MallocArray(uint32,MAX_SIZE)
-    tapeidx = MallocArray(uint32,MAX_SIZE)
+    derivnparams = MallocArray(idxtype,MAX_SIZE)
+    tapeidx = MallocArray(idxtype,MAX_SIZE)
     tapeval = MallocArray(double,MAX_SIZE)
     tapepos,derivpos = 0,0
 end
-initializeGlobals()
+ad.initGlobals()
 
 struct Num {
     value : double;
-    idx : uint32; --index into derivs storing dy/dself
+    idx : idxtype; --index into derivs storing dy/dself
 }
 
 --returns idx of derivative, and idx in to tape to store the parameters
@@ -311,6 +315,9 @@ local terra tapealloc(np : uint32)
     derivs[d] = 0.0
     derivnparams[d] = np 
     derivpos,tapepos = derivpos+1,tapepos + np
+    if derivpos >= MAX_SIZE or tapepos >= MAX_SIZE then
+        C.printf("EXCEEDED MAX SIZE\n")
+    end
     return d,t
 end
 
@@ -362,6 +369,21 @@ function op:macro()
     end)
 end
 
+local maxmem = global(double,0.0)
+
+terra resetTape()
+    var memallocated = (derivpos + tapepos) * 12
+    if maxmem < memallocated then
+        maxmem = memallocated
+    end
+    derivpos,tapepos = 0,0
+end
+
+terra ad.maxTapeMemUsed()
+    return maxmem
+end
+
+
 -- Compute the gradient dself/dv for other variables v
 terra Num:grad() : {}
     derivs[self.idx] = 1.0
@@ -370,13 +392,17 @@ terra Num:grad() : {}
         var i = i_ - 1 
         var dydv = derivs[i]
         var np = derivnparams[i]
+        if np > 2 then
+            C.printf("np = %d\n",int(np))
+        end
         for j = 0,np do
             t = t - 1
             var idx,val = tapeidx[t],tapeval[t]
             derivs[idx] = derivs[idx] + val*dydv
         end
     end
-    derivpos,tapepos = 0,0
+    
+    
 end
 
 local Vector = terralib.require("vector")
