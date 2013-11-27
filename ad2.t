@@ -344,28 +344,33 @@ function op:macro()
         local argsym = terralib.newlist {}
         for i = 1,self.nparams do
             local a = select(i,...)
-            if a:gettype() == double then
-                --TODO: regenerate op with fewer arguments, do not promote 'a' into the tape
-                a = `ad.num(a)
-            end
-            args[i],argsym[i] = a, symbol(Num)
+            args[i] = a
+            argsym[i] = a:gettype() == Num and symbol(Num) or symbol(double)
         end
-        local function partialaddr(base,p)
-            local r = {}
-            for i = 1, self.nparams do
-                r[i] = `base[p + [i-1]]
+        local tapevals,tapeidxs,values,idxs = terralib.newlist(),terralib.newlist(),terralib.newlist(),terralib.newlist()
+        local t = symbol()
+        local nvar = 0
+        for i,a in ipairs(argsym) do
+            if a.type == Num then
+                tapevals:insert(`tapeval[t + nvar])
+                tapeidxs:insert(`tapeidx[t + nvar])
+                values:insert(`a.value)
+                idxs:insert(`a.idx)
+                nvar = nvar + 1
+            else
+                --parameter is a constant, generate dead code and don't record to tape
+                tapevals:insert(a)
+                tapeidxs:insert(a)
+                values:insert(a)
+                idxs:insert(a)
             end
-            assert(terralib.israwlist(r))
-            return r
         end
-        local values = argsym:map(function(a) return `a.value end)
-        local idxs = argsym:map(function(a) return `a.idx end)
         local r = quote
             var [argsym] = [args]
-            var d,t = tapealloc(self.nparams)
+            var d,[t] = tapealloc(nvar)
             var v : double
-            v,[partialaddr(tapeval,t)] = impl(values)
-            [partialaddr(tapeidx,t)] = idxs
+            v,[tapevals] = impl(values)
+            [tapeidxs] = idxs
         in Num { v, d } end
         --r:printpretty()
         return r
@@ -373,7 +378,7 @@ function op:macro()
 end
 
 terra resetTape()
-    var memallocated = (derivpos + tapepos) * 12
+    var memallocated = (derivpos + tapepos) * (sizeof(double) + sizeof(idxtype))
     if maxmem < memallocated then
         maxmem = memallocated
     end

@@ -1,5 +1,5 @@
 local Vector = terralib.require("vector")
-local ad = terralib.require("ad")
+local ad = terralib.require("ad2")
 local num = ad.num
 local m = terralib.require("mem")
 local util = terralib.require("util")
