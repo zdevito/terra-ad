@@ -166,9 +166,9 @@ function op.__call(self,...)
     return self.generator(unpack(args))
 end
 
-function  ad.compoundop(fn)
+function  ad.compoundop(fn,nparams)
     local o = op.new { generator = fn }
-    o.nparams = debug.getinfo(fn,"u").nparams
+    o.nparams = nparams or debug.getinfo(fn,"u").nparams
     o.stmts, o.results = composeop(o.nparams,o.generator)
     return o
 end
@@ -398,9 +398,6 @@ terra Num:grad() : {}
         var i = i_ - 1 
         var dydv = derivs[i]
         var np = derivnparams[i]
-        if np > 2 then
-            C.printf("np = %d\n",int(np))
-        end
         for j = 0,np do
             t = t - 1
             var idx,val = tapeidx[t],tapeval[t]

@@ -105,16 +105,37 @@ terra LogisticRegressionModel:bias(params: &Vector(num), class: uint)
 end
 util.inline(LogisticRegressionModel.methods.bias)
 
+local unrollN = 8
+local f1 = ad.compoundop(function(a,...)
+    for i = 0,unrollN - 1 do
+        a = a + select(2*i + 1,...) * select(2*i + 2,...)
+    end
+    return a
+end,1 + 2*unrollN):macro()
+
+local f2 = ad.compoundop(function(a,b)
+    return ad.exp(a + b)
+end):macro()
+
+local function dounroll(w,j,features)
+    local args = terralib.newlist()
+    for i = 0, unrollN - 1 do
+        args:insert(`w[j + i])
+        args:insert(`features:get(j+i))
+    end
+    return args
+end
+
 terra LogisticRegressionModel:logprob(class: int, features: &Vector(double), params: &Vector(num))
 	var activations = [Vector(num)].stackAlloc(self.numClasses, 0.0)
 	var sumActivations = num(0.0)
 	for i=0,self.numClasses do
 		var w = self:weights(params, i)
 		var dotprod = num(0.0)
-		for j=0,self.numFeatures do
-			dotprod = dotprod + w[j]*features:get(j)
+		for j=0,self.numFeatures,unrollN do
+			dotprod = f1(dotprod,[dounroll(w,j,features)])
 		end
-		var act = ad.math.exp(dotprod + self:bias(params, i))
+		var act = f2(dotprod,self:bias(params, i))
 		activations:set(i, act)
 		sumActivations = sumActivations + act
 	end
